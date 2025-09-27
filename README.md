@@ -5,12 +5,31 @@ configurable field pairs.
 
 ## Quick Start
 
-1. [Notion Setup](#notion-setup) - Create database and integration
-2. [Environment Variables](#environment-variables) - Configure tokens
-3. [Deploy](#deploy) - Deploy to Slack
-4. [Usage](#usage) - Use in workflows
+1. [Project Setup](#project-setup) - Initialize Slack project
+2. [Notion Setup](#notion-setup) - Create database and integration
+3. [Environment Variables](#environment-variables) - Configure tokens
+4. [Deploy](#deploy) - Deploy to Slack
+5. [Usage](#usage) - Use in workflows
 
 ---
+
+## Project Setup
+
+Initialize the Slack project in your workspace:
+
+```bash
+# Clone the repository
+git clone git@github.com:RayYokoyama/slack-custom-step-create-notion-db-item.git
+cd slack-custom-step-create-notion-db-item
+
+# Initialize Slack project
+slack init
+
+# Follow the prompts to:
+# - Choose your Slack workspace
+# - Select "Create a new app"
+# - Use the existing manifest.ts file
+```
 
 ## Notion Setup
 
