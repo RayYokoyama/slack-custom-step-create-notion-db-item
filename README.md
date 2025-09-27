@@ -64,6 +64,18 @@ This starts a local development server where you can test the workflow step befo
 
 ### Production Deployment
 
+Set up environment variables:
+
+```bash
+# Add NOTION_TOKEN (required)
+slack env add NOTION_TOKEN your_notion_token_here
+
+# Check current environment variables
+slack env list
+```
+
+Then deploy:
+
 ```bash
 slack deploy
 ```
@@ -134,10 +146,9 @@ values appropriately:
 
 ## Troubleshooting
 
-- **"NOTION_TOKEN environment variable is not set"** - Set the token in
-  deployment environment
+- **"NOTION_TOKEN environment variable is not set"** - Use `slack env add NOTION_TOKEN your_token` **before** deploying
+- **No output from deployed version** - Check that environment variables are properly set with `slack env list` before deployment
+- **Works locally but not deployed** - Environment variables must be set with `slack env add` before deployment (`.env` file is only for local testing)
 - **"Failed to create Notion item"** - Check integration has database access
-- **Select field errors** - Ensure Notion database select options match exact
-  field values
-- **Empty fields** - Only fill Field Name AND Field Value pairs you want to use;
-  empty pairs are ignored
+- **Select field errors** - Ensure Notion database select options match exact field values
+- **Empty fields** - Only fill Field Name AND Field Value pairs you want to use; empty pairs are ignored
