@@ -18,6 +18,8 @@ export default Manifest({
     "chat:write",
     "chat:write.public",
     "workflow.steps:execute",
+    "users:read",
+    "users:read.email",
   ],
   env: {
     NOTION_TOKEN: {

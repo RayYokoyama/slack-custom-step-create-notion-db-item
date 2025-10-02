@@ -60,3 +60,24 @@ export interface NotionDatabase {
     type: NotionPropertyType;
   }>;
 }
+
+export interface NotionPerson {
+  email?: string;
+}
+
+export interface NotionUser {
+  object: "user";
+  id: string;
+  type: "person" | "bot";
+  name?: string;
+  avatar_url?: string;
+  person?: NotionPerson;
+  bot?: Record<string, unknown>;
+}
+
+export interface NotionUsersListResponse {
+  object: "list";
+  results: NotionUser[];
+  next_cursor: string | null;
+  has_more: boolean;
+}

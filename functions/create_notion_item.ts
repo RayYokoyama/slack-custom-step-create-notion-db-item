@@ -1,5 +1,6 @@
 import { DefineFunction, Schema, SlackFunction } from "deno-slack-sdk/mod.ts";
 import { NotionClient } from "./utils/notion_client.ts";
+import { UserMapper } from "./utils/user_mapper.ts";
 import {
   NotionCreatePageRequest,
   NotionPageProperty,
@@ -96,6 +97,30 @@ export const CreateNotionItemFunction = DefineFunction({
         type: Schema.types.string,
         description: "Property value for field 10",
       },
+      user_field1_name: {
+        type: Schema.types.string,
+        description: "Property name for user field 1 (people property)",
+      },
+      user_field1_value: {
+        type: Schema.slack.types.user_id,
+        description: "User ID for user field 1",
+      },
+      user_field2_name: {
+        type: Schema.types.string,
+        description: "Property name for user field 2 (people property)",
+      },
+      user_field2_value: {
+        type: Schema.slack.types.user_id,
+        description: "User ID for user field 2",
+      },
+      user_field3_name: {
+        type: Schema.types.string,
+        description: "Property name for user field 3 (people property)",
+      },
+      user_field3_value: {
+        type: Schema.slack.types.user_id,
+        description: "User ID for user field 3",
+      },
     },
     required: ["database_id"],
   },
@@ -117,6 +142,10 @@ export const CreateNotionItemFunction = DefineFunction({
         type: Schema.types.string,
         description: "Error message if operation failed",
       },
+      user_mapping_warnings: {
+        type: Schema.types.string,
+        description: "Warnings about failed user mappings",
+      },
     },
     required: ["success"],
   },
@@ -124,7 +153,7 @@ export const CreateNotionItemFunction = DefineFunction({
 
 export default SlackFunction(
   CreateNotionItemFunction,
-  async ({ inputs, env }) => {
+  async ({ inputs, env, client }) => {
     try {
       // Get token from environment variable
       const notionToken = env.NOTION_TOKEN || "";
@@ -143,7 +172,19 @@ export default SlackFunction(
 
       // Collect field pairs from inputs
       const propertiesData: Record<string, unknown> = {};
+      const userFieldsData: Record<string, string> = {};
 
+      // Collect user fields (these use user_id type)
+      for (let i = 1; i <= 3; i++) {
+        const fieldName = inputs[`user_field${i}_name`] as string;
+        const fieldValue = inputs[`user_field${i}_value`] as string;
+
+        if (fieldName && fieldValue) {
+          userFieldsData[fieldName] = fieldValue;
+        }
+      }
+
+      // Collect regular fields
       for (let i = 1; i <= 10; i++) {
         const fieldName = inputs[`field${i}_name`] as string;
         const fieldValue = inputs[`field${i}_value`] as string;
@@ -154,6 +195,10 @@ export default SlackFunction(
       }
 
       const notionClient = new NotionClient(notionToken);
+      const userMapper = new UserMapper(client, notionClient);
+
+      // Track user mapping warnings
+      const userMappingWarnings: string[] = [];
 
       // Get database schema to validate and convert properties
       const database = await notionClient.getDatabaseSchema(databaseId);
@@ -162,6 +207,45 @@ export default SlackFunction(
       // Convert input data to Notion properties format
       const notionProperties: Record<string, NotionPageProperty> = {};
 
+      // Process user fields first (dedicated people properties)
+      for (const [fieldName, userId] of Object.entries(userFieldsData)) {
+        if (!userId) continue;
+
+        const propertyDef = writableProperties.find((p) =>
+          p.name === fieldName
+        );
+        if (!propertyDef) {
+          console.warn(`Unknown property: ${fieldName}`);
+          continue;
+        }
+
+        if (propertyDef.type !== "people") {
+          console.warn(
+            `Property ${fieldName} is not a people type (got ${propertyDef.type}). Skipping user field.`,
+          );
+          continue;
+        }
+
+        // Map the Slack user ID to Notion user ID
+        const mappingResult = await userMapper.mapSlackUserToNotionUser(userId);
+
+        if (mappingResult.notionUserId) {
+          notionProperties[fieldName] = {
+            type: "people",
+            people: [{ id: mappingResult.notionUserId }],
+          };
+          console.log(
+            `Mapped user field ${fieldName}: ${userId} -> ${mappingResult.notionUserId}`,
+          );
+        } else {
+          const warning =
+            `Failed to map user field ${fieldName} (${userId}): ${mappingResult.error || "Unknown error"}`;
+          console.warn(warning);
+          userMappingWarnings.push(warning);
+        }
+      }
+
+      // Process regular fields
       for (const [fieldName, fieldValue] of Object.entries(propertiesData)) {
         if (
           fieldValue === null || fieldValue === undefined || fieldValue === ""
@@ -267,6 +351,43 @@ export default SlackFunction(
               phone_number: String(fieldValue),
             };
             break;
+          case "people": {
+            // Map Slack user IDs to Notion user IDs
+            const mappingResults = await userMapper.mapMultipleUsers(
+              String(fieldValue),
+            );
+
+            // Track failed mappings
+            const failedMappings = mappingResults.filter((result) =>
+              result.notionUserId === null
+            );
+            if (failedMappings.length > 0) {
+              failedMappings.forEach((failed) => {
+                const warning =
+                  `Failed to map Slack user ${failed.slackUserId}: ${failed.error || "Unknown error"}`;
+                console.warn(warning);
+                userMappingWarnings.push(warning);
+              });
+            }
+
+            // Get successfully mapped user IDs
+            const validUserIds = mappingResults
+              .filter((result) => result.notionUserId !== null)
+              .map((result) => result.notionUserId as string);
+
+            if (validUserIds.length > 0) {
+              notionProperties[fieldName] = {
+                type: "people",
+                people: validUserIds.map((id) => ({ id })),
+              };
+            } else if (mappingResults.length > 0) {
+              // All mappings failed
+              console.warn(
+                `No valid Notion users found for people property: ${fieldName}`,
+              );
+            }
+            break;
+          }
           default:
             console.warn(`Unsupported property type: ${propertyDef.type}`);
         }
@@ -296,6 +417,9 @@ export default SlackFunction(
           page_id: createdPage.id,
           page_url: createdPage.url,
           success: true,
+          user_mapping_warnings: userMappingWarnings.length > 0
+            ? userMappingWarnings.join("; ")
+            : undefined,
         },
       };
     } catch (error) {
