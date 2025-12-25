@@ -45,6 +45,13 @@ export interface NotionCreatePageResponse {
   url: string;
 }
 
+export interface NotionUpdatePageResponse {
+  id: string;
+  created_time: string;
+  last_edited_time: string;
+  url: string;
+}
+
 export interface NotionDatabaseProperty {
   id: string;
   name: string;

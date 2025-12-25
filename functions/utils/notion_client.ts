@@ -3,6 +3,8 @@ import {
   NotionCreatePageResponse,
   NotionDatabase,
   NotionDatabaseProperty,
+  NotionPageProperty,
+  NotionUpdatePageResponse,
   NotionUsersListResponse,
   NotionUser,
 } from "../../types/notion.ts";
@@ -50,6 +52,27 @@ export class NotionClient {
       method: "POST",
       body: JSON.stringify(request),
     });
+  }
+
+  async updatePage(
+    pageId: string,
+    properties: Record<string, NotionPageProperty>,
+  ): Promise<NotionUpdatePageResponse> {
+    return await this.makeRequest<NotionUpdatePageResponse>(
+      `/pages/${pageId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ properties }),
+      },
+    );
+  }
+
+  async getPage(pageId: string): Promise<{
+    id: string;
+    parent: { type: string; database_id?: string };
+    url: string;
+  }> {
+    return await this.makeRequest(`/pages/${pageId}`);
   }
 
   async getDatabaseSchema(databaseId: string): Promise<NotionDatabase> {
