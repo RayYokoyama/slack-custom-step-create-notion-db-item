@@ -1,5 +1,6 @@
 import { Manifest } from "deno-slack-sdk/mod.ts";
 import { CreateNotionItemFunction } from "./functions/create_notion_item.ts";
+import { UpdateNotionItemFunction } from "./functions/update_notion_item.ts";
 
 /**
  * The app manifest contains the app's configuration. This
@@ -8,9 +9,9 @@ import { CreateNotionItemFunction } from "./functions/create_notion_item.ts";
  */
 export default Manifest({
   name: "notion-db-item-creator",
-  description: "Create items in a predefined Notion database using form data",
+  description: "Create and update items in Notion databases using form data",
   icon: "assets/default_new_app_icon.png",
-  functions: [CreateNotionItemFunction],
+  functions: [CreateNotionItemFunction, UpdateNotionItemFunction],
   workflows: [],
   outgoingDomains: ["api.notion.com"],
   botScopes: [

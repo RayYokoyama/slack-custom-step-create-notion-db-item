@@ -1,23 +1,22 @@
 import { DefineFunction, Schema, SlackFunction } from "deno-slack-sdk/mod.ts";
 import { NotionClient } from "./utils/notion_client.ts";
 import { UserMapper } from "./utils/user_mapper.ts";
-import { NotionCreatePageRequest } from "../types/notion.ts";
 import {
   collectFieldsFromInputs,
   convertToNotionProperties,
   UserMappingFunction,
 } from "./utils/property_converter.ts";
 
-export const CreateNotionItemFunction = DefineFunction({
-  callback_id: "create_notion_item",
-  title: "Create Notion Database Item",
-  description: "Create an item in a Notion database with configurable fields",
-  source_file: "functions/create_notion_item.ts",
+export const UpdateNotionItemFunction = DefineFunction({
+  callback_id: "update_notion_item",
+  title: "Update Notion Database Item",
+  description: "Update an existing item in a Notion database",
+  source_file: "functions/update_notion_item.ts",
   input_parameters: {
     properties: {
-      database_id: {
+      page_id: {
         type: Schema.types.string,
-        description: "Notion Database ID (32-character string)",
+        description: "Notion Page ID to update",
       },
       field1_name: {
         type: Schema.types.string,
@@ -124,17 +123,17 @@ export const CreateNotionItemFunction = DefineFunction({
         description: "User ID for user field 3",
       },
     },
-    required: ["database_id"],
+    required: ["page_id"],
   },
   output_parameters: {
     properties: {
       page_id: {
         type: Schema.types.string,
-        description: "Created Notion page ID",
+        description: "Updated Notion page ID",
       },
       page_url: {
         type: Schema.types.string,
-        description: "URL of the created page",
+        description: "URL of the updated page",
       },
       success: {
         type: Schema.types.boolean,
@@ -172,7 +171,7 @@ function createUserMappingAdapter(userMapper: UserMapper): UserMappingFunction {
 }
 
 export default SlackFunction(
-  CreateNotionItemFunction,
+  UpdateNotionItemFunction,
   async ({ inputs, env, client }) => {
     try {
       const notionToken = env.NOTION_TOKEN || "";
@@ -186,8 +185,22 @@ export default SlackFunction(
         };
       }
 
-      const databaseId = inputs.database_id;
+      const pageId = inputs.page_id;
       const notionClient = new NotionClient(notionToken);
+
+      // Get page info to find parent database
+      const pageInfo = await notionClient.getPage(pageId);
+
+      if (pageInfo.parent.type !== "database_id" || !pageInfo.parent.database_id) {
+        return {
+          outputs: {
+            success: false,
+            error: "The specified page is not part of a database",
+          },
+        };
+      }
+
+      const databaseId = pageInfo.parent.database_id;
       const userMapper = new UserMapper(client, notionClient);
 
       // Collect fields from inputs using shared function
@@ -205,29 +218,23 @@ export default SlackFunction(
         userMappingAdapter,
       );
 
-      // Validate required title property
-      const titleProperty = writableProperties.find((p) => p.type === "title");
-      if (titleProperty && !notionProperties[titleProperty.name]) {
+      // Check if there are any properties to update
+      if (Object.keys(notionProperties).length === 0) {
         return {
           outputs: {
             success: false,
-            error: `Title field "${titleProperty.name}" is required`,
+            error: "No valid properties to update",
           },
         };
       }
 
-      // Create the Notion page
-      const createRequest: NotionCreatePageRequest = {
-        parent: { database_id: databaseId },
-        properties: notionProperties,
-      };
-
-      const createdPage = await notionClient.createPage(createRequest);
+      // Update the Notion page
+      const updatedPage = await notionClient.updatePage(pageId, notionProperties);
 
       return {
         outputs: {
-          page_id: createdPage.id,
-          page_url: createdPage.url,
+          page_id: updatedPage.id,
+          page_url: updatedPage.url,
           success: true,
           user_mapping_warnings: warnings.length > 0
             ? warnings.join("; ")
@@ -235,14 +242,14 @@ export default SlackFunction(
         },
       };
     } catch (error) {
-      console.error("Error creating Notion item:", error);
+      console.error("Error updating Notion item:", error);
       const errorMessage = error instanceof Error
         ? error.message
         : "Unknown error occurred";
       return {
         outputs: {
           success: false,
-          error: `Failed to create Notion item: ${errorMessage}`,
+          error: `Failed to update Notion item: ${errorMessage}`,
         },
       };
     }
