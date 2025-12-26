@@ -126,6 +126,22 @@ export function convertPropertyValue(
         }
       }
 
+      // Handle Slack timestamp format: "December 26th, 2025 at 1:04 AM UTC"
+      const slackTimestampMatch = isoDate.match(
+        /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:st|nd|rd|th),?\s+(\d{4})/i
+      );
+      if (slackTimestampMatch) {
+        const monthNames: Record<string, string> = {
+          january: "01", february: "02", march: "03", april: "04",
+          may: "05", june: "06", july: "07", august: "08",
+          september: "09", october: "10", november: "11", december: "12",
+        };
+        const month = monthNames[slackTimestampMatch[1].toLowerCase()];
+        const day = slackTimestampMatch[2].padStart(2, "0");
+        const year = slackTimestampMatch[3];
+        isoDate = `${year}-${month}-${day}`;
+      }
+
       // Validate ISO date format
       if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
         console.warn(

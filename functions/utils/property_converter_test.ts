@@ -193,6 +193,54 @@ Deno.test("convertPropertyValue - date type with invalid format returns null", (
   assertEquals(result, null);
 });
 
+Deno.test("convertPropertyValue - date type converts Slack timestamp format", () => {
+  const result = convertPropertyValue(
+    "DueDate",
+    "December 26th, 2025 at 1:04 AM UTC",
+    "date",
+  );
+
+  assertExists(result);
+  assertEquals(result.type, "date");
+  assertEquals(result.date, { start: "2025-12-26" });
+});
+
+Deno.test("convertPropertyValue - date type converts Slack timestamp with 1st", () => {
+  const result = convertPropertyValue(
+    "DueDate",
+    "January 1st, 2025 at 12:00 PM UTC",
+    "date",
+  );
+
+  assertExists(result);
+  assertEquals(result.type, "date");
+  assertEquals(result.date, { start: "2025-01-01" });
+});
+
+Deno.test("convertPropertyValue - date type converts Slack timestamp with 2nd", () => {
+  const result = convertPropertyValue(
+    "DueDate",
+    "February 2nd, 2025 at 3:30 PM UTC",
+    "date",
+  );
+
+  assertExists(result);
+  assertEquals(result.type, "date");
+  assertEquals(result.date, { start: "2025-02-02" });
+});
+
+Deno.test("convertPropertyValue - date type converts Slack timestamp with 3rd", () => {
+  const result = convertPropertyValue(
+    "DueDate",
+    "March 3rd, 2025 at 9:15 AM UTC",
+    "date",
+  );
+
+  assertExists(result);
+  assertEquals(result.type, "date");
+  assertEquals(result.date, { start: "2025-03-03" });
+});
+
 Deno.test("convertPropertyValue - checkbox type with true", () => {
   const result = convertPropertyValue("Done", true, "checkbox");
 
