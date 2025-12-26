@@ -1,10 +1,12 @@
 import { DefineFunction, Schema, SlackFunction } from "deno-slack-sdk/mod.ts";
 import { NotionClient } from "./utils/notion_client.ts";
 import { UserMapper } from "./utils/user_mapper.ts";
+import { NotionCreatePageRequest } from "../types/notion.ts";
 import {
-  NotionCreatePageRequest,
-  NotionPageProperty,
-} from "../types/notion.ts";
+  collectFieldsFromInputs,
+  convertToNotionProperties,
+  UserMappingFunction,
+} from "./utils/property_converter.ts";
 
 export const CreateNotionItemFunction = DefineFunction({
   callback_id: "create_notion_item",
@@ -151,11 +153,28 @@ export const CreateNotionItemFunction = DefineFunction({
   },
 });
 
+/**
+ * Create UserMappingFunction adapter from UserMapper
+ */
+function createUserMappingAdapter(userMapper: UserMapper): UserMappingFunction {
+  return {
+    mapSingle: async (userId: string) => {
+      const result = await userMapper.mapSlackUserToNotionUser(userId);
+      return {
+        notionUserId: result.notionUserId,
+        error: result.error,
+      };
+    },
+    mapMultiple: async (userIds: string) => {
+      return await userMapper.mapMultipleUsers(userIds);
+    },
+  };
+}
+
 export default SlackFunction(
   CreateNotionItemFunction,
   async ({ inputs, env, client }) => {
     try {
-      // Get token from environment variable
       const notionToken = env.NOTION_TOKEN || "";
 
       if (!notionToken) {
@@ -167,233 +186,26 @@ export default SlackFunction(
         };
       }
 
-      // Get database ID from input
       const databaseId = inputs.database_id;
-
-      // Collect field pairs from inputs
-      const propertiesData: Record<string, unknown> = {};
-      const userFieldsData: Record<string, string> = {};
-
-      // Collect user fields (these use user_id type)
-      for (let i = 1; i <= 3; i++) {
-        const fieldName = inputs[`user_field${i}_name`] as string;
-        const fieldValue = inputs[`user_field${i}_value`] as string;
-
-        if (fieldName && fieldValue) {
-          userFieldsData[fieldName] = fieldValue;
-        }
-      }
-
-      // Collect regular fields
-      for (let i = 1; i <= 10; i++) {
-        const fieldName = inputs[`field${i}_name`] as string;
-        const fieldValue = inputs[`field${i}_value`] as string;
-
-        if (fieldName && fieldValue) {
-          propertiesData[fieldName] = fieldValue;
-        }
-      }
-
       const notionClient = new NotionClient(notionToken);
       const userMapper = new UserMapper(client, notionClient);
 
-      // Track user mapping warnings
-      const userMappingWarnings: string[] = [];
+      // Collect fields from inputs using shared function
+      const collectedFields = collectFieldsFromInputs(inputs as Record<string, unknown>);
 
-      // Get database schema to validate and convert properties
+      // Get database schema
       const database = await notionClient.getDatabaseSchema(databaseId);
       const writableProperties = notionClient.getWritableProperties(database);
 
-      // Convert input data to Notion properties format
-      const notionProperties: Record<string, NotionPageProperty> = {};
+      // Convert to Notion properties using shared function
+      const userMappingAdapter = createUserMappingAdapter(userMapper);
+      const { notionProperties, warnings } = await convertToNotionProperties(
+        collectedFields,
+        writableProperties,
+        userMappingAdapter,
+      );
 
-      // Process user fields first (dedicated people properties)
-      for (const [fieldName, userId] of Object.entries(userFieldsData)) {
-        if (!userId) continue;
-
-        const propertyDef = writableProperties.find((p) =>
-          p.name === fieldName
-        );
-        if (!propertyDef) {
-          console.warn(`Unknown property: ${fieldName}`);
-          continue;
-        }
-
-        if (propertyDef.type !== "people") {
-          console.warn(
-            `Property ${fieldName} is not a people type (got ${propertyDef.type}). Skipping user field.`,
-          );
-          continue;
-        }
-
-        // Map the Slack user ID to Notion user ID
-        const mappingResult = await userMapper.mapSlackUserToNotionUser(userId);
-
-        if (mappingResult.notionUserId) {
-          notionProperties[fieldName] = {
-            type: "people",
-            people: [{ id: mappingResult.notionUserId }],
-          };
-          console.log(
-            `Mapped user field ${fieldName}: ${userId} -> ${mappingResult.notionUserId}`,
-          );
-        } else {
-          const warning =
-            `Failed to map user field ${fieldName} (${userId}): ${mappingResult.error || "Unknown error"}`;
-          console.warn(warning);
-          userMappingWarnings.push(warning);
-        }
-      }
-
-      // Process regular fields
-      for (const [fieldName, fieldValue] of Object.entries(propertiesData)) {
-        if (
-          fieldValue === null || fieldValue === undefined || fieldValue === ""
-        ) {
-          continue;
-        }
-
-        const propertyDef = writableProperties.find((p) =>
-          p.name === fieldName
-        );
-        if (!propertyDef) {
-          console.warn(`Unknown property: ${fieldName}`);
-          continue;
-        }
-
-        // Convert based on property type
-        switch (propertyDef.type) {
-          case "title":
-            notionProperties[fieldName] = {
-              type: "title",
-              title: [{ text: { content: String(fieldValue) } }],
-            };
-            break;
-          case "rich_text":
-            notionProperties[fieldName] = {
-              type: "rich_text",
-              rich_text: [{ text: { content: String(fieldValue) } }],
-            };
-            break;
-          case "number": {
-            const numValue = typeof fieldValue === "number"
-              ? fieldValue
-              : parseFloat(String(fieldValue));
-            if (!isNaN(numValue)) {
-              notionProperties[fieldName] = {
-                type: "number",
-                number: numValue,
-              };
-            }
-            break;
-          }
-          case "select":
-            notionProperties[fieldName] = {
-              type: "select",
-              select: { name: String(fieldValue) },
-            };
-            break;
-          case "multi_select": {
-            const multiSelectValues = Array.isArray(fieldValue)
-              ? fieldValue
-              : [fieldValue];
-            notionProperties[fieldName] = {
-              type: "multi_select",
-              multi_select: multiSelectValues.map((v) => ({ name: String(v) })),
-            };
-            break;
-          }
-          case "date": {
-            // Convert various date formats to ISO 8601 (YYYY-MM-DD)
-            let isoDate = String(fieldValue);
-
-            // Convert YYYY/MM/DD to YYYY-MM-DD
-            if (isoDate.includes("/")) {
-              const parts = isoDate.split("/");
-              if (parts.length === 3) {
-                isoDate = `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
-              }
-            }
-
-            // Validate ISO date format
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
-              console.warn(`Invalid date format for ${fieldName}: ${fieldValue}. Expected YYYY-MM-DD format.`);
-              break;
-            }
-
-            notionProperties[fieldName] = {
-              type: "date",
-              date: { start: isoDate },
-            };
-            break;
-          }
-          case "checkbox":
-            notionProperties[fieldName] = {
-              type: "checkbox",
-              checkbox: Boolean(fieldValue),
-            };
-            break;
-          case "url":
-            notionProperties[fieldName] = {
-              type: "url",
-              url: String(fieldValue),
-            };
-            break;
-          case "email":
-            notionProperties[fieldName] = {
-              type: "email",
-              email: String(fieldValue),
-            };
-            break;
-          case "phone_number":
-            notionProperties[fieldName] = {
-              type: "phone_number",
-              phone_number: String(fieldValue),
-            };
-            break;
-          case "people": {
-            // Map Slack user IDs to Notion user IDs
-            const mappingResults = await userMapper.mapMultipleUsers(
-              String(fieldValue),
-            );
-
-            // Track failed mappings
-            const failedMappings = mappingResults.filter((result) =>
-              result.notionUserId === null
-            );
-            if (failedMappings.length > 0) {
-              failedMappings.forEach((failed) => {
-                const warning =
-                  `Failed to map Slack user ${failed.slackUserId}: ${failed.error || "Unknown error"}`;
-                console.warn(warning);
-                userMappingWarnings.push(warning);
-              });
-            }
-
-            // Get successfully mapped user IDs
-            const validUserIds = mappingResults
-              .filter((result) => result.notionUserId !== null)
-              .map((result) => result.notionUserId as string);
-
-            if (validUserIds.length > 0) {
-              notionProperties[fieldName] = {
-                type: "people",
-                people: validUserIds.map((id) => ({ id })),
-              };
-            } else if (mappingResults.length > 0) {
-              // All mappings failed
-              console.warn(
-                `No valid Notion users found for people property: ${fieldName}`,
-              );
-            }
-            break;
-          }
-          default:
-            console.warn(`Unsupported property type: ${propertyDef.type}`);
-        }
-      }
-
-      // Validate required properties
+      // Validate required title property
       const titleProperty = writableProperties.find((p) => p.type === "title");
       if (titleProperty && !notionProperties[titleProperty.name]) {
         return {
@@ -417,8 +229,8 @@ export default SlackFunction(
           page_id: createdPage.id,
           page_url: createdPage.url,
           success: true,
-          user_mapping_warnings: userMappingWarnings.length > 0
-            ? userMappingWarnings.join("; ")
+          user_mapping_warnings: warnings.length > 0
+            ? warnings.join("; ")
             : undefined,
         },
       };
